@@ -755,12 +755,6 @@ export const clearCache = () => {
 
 // Melhorar a função fetchNetworkStats para garantir todos os dados necessários
 export const fetchNetworkStats = async () => {
-  const urls = [
-    'https://api.multiversx.com/stats',
-    'https://gateway.multiversx.com/stats',
-    'https://testnet-api.multiversx.com/stats'
-  ];
-  
   // Dados de demonstração completos para usar em caso de falha
   const fallbackStats = {
     transactions: {
@@ -776,10 +770,27 @@ export const fetchNetworkStats = async () => {
     epoch: 1028,
     refreshRate: 15,
     roundsPerEpoch: 14400,
-    roundsPassed: 14818000
+    roundsPassed: 14818000,
+    // Adicionar dados de staking para fallback
+    staking: {
+      totalStaked: 7543210000000000000000000, // Valor em wei
+      providers: 3200
+    },
+    economics: {
+      staked: 7543210000000000000000000, // Valor em wei como alternativa
+      totalSupply: 24300000000000000000000000
+    }
   };
   
   console.log('Iniciando busca de estatísticas em múltiplos endpoints...');
+  
+  // Adicionar URL específica para dados econômicos
+  const urls = [
+    'https://api.multiversx.com/stats',
+    'https://gateway.multiversx.com/stats',
+    'https://api.multiversx.com/economics',
+    'https://testnet-api.multiversx.com/stats'
+  ];
   
   // Tentar cada URL sequencialmente
   for (const url of urls) {
@@ -811,6 +822,30 @@ export const fetchNetworkStats = async () => {
       console.log('TPS:', data.tps);
       console.log('Contas ativas:', data.accounts?.active);
       console.log('Total de blocos:', data.blocks);
+      console.log('Total em staking:', data.staking?.totalStaked || data.economics?.staked);
+      
+      // Tratar o caso especial do endpoint de economia
+      if (url.includes('/economics') && data) {
+        // Criar um objeto compatível com o formato esperado, mas com dados de economics
+        const economicsData = {
+          economics: { ...data },
+          // Se tivermos dados de staking, adicionar explicitamente
+          staking: {
+            totalStaked: data.staked || data.totalStaked
+          }
+        };
+        
+        console.log('Dados econômicos processados:', economicsData);
+        
+        // Mesclar com os dados existentes (dados de economics têm precedência)
+        const combinedData = {
+          ...fallbackStats,
+          ...economicsData
+        };
+        
+        console.log('Dados combinados com economics:', combinedData);
+        return combinedData;
+      }
       
       // Verificar se os dados são válidos e completos
       if (!data || typeof data !== 'object') {
@@ -829,6 +864,17 @@ export const fetchNetworkStats = async () => {
         accounts: {
           ...fallbackStats.accounts,
           ...(data.accounts || {})
+        },
+        // Garantir que dados de staking sejam preservados mesmo se virem em formato diferente
+        staking: {
+          ...fallbackStats.staking,
+          ...(data.staking || {}),
+          // Usar dados de economics.staked como fallback para staking.totalStaked se necessário
+          totalStaked: data.staking?.totalStaked || data.economics?.staked || fallbackStats.staking.totalStaked
+        },
+        economics: {
+          ...fallbackStats.economics,
+          ...(data.economics || {})
         }
       };
       
