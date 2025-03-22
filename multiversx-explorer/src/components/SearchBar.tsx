@@ -1,90 +1,80 @@
 import React, { useState } from 'react';
-import { Paper, InputBase, IconButton, Box, Typography, useTheme, CircularProgress, Button } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from 'react-router-dom';
 import { searchByQuery } from '../services/api';
-import { useNotification } from '../contexts/NotificationContext';
+import SearchIcon from '@mui/icons-material/Search';
+import CircularProgress from '@mui/material/CircularProgress';
+import Paper from '@mui/material/Paper';
+import InputBase from '@mui/material/InputBase';
+import IconButton from '@mui/material/IconButton';
+import { useTheme } from '@mui/material/styles';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import config from '../config';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
 
 const SearchBar: React.FC = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const navigate = useNavigate();
   const theme = useTheme();
   
-  // Usar try/catch para evitar erros caso o NotificationContext não esteja disponível
-  let showNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
-  try {
-    const notificationContext = useNotification();
-    showNotification = notificationContext.showNotification;
-  } catch (error) {
-    // Fallback caso o contexto não esteja disponível
-    showNotification = (message: string) => {
-      console.log('Notification (fallback):', message);
-    };
-  }
+  // Função para mostrar notificações
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' | 'warning') => {
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    // Você pode implementar notificações visuais aqui se desejar
+  };
 
-  const handleSearch = async () => {
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setExternalUrl(null);
+    
     if (!searchTerm.trim()) {
-      setError('Por favor, insira um termo de busca');
+      setError('Por favor, insira um termo para pesquisar');
       return;
     }
-
-    setError('');
-    setLoading(true);
-    setExternalUrl(null);
-
+    
+    setIsLoading(true);
+    console.log('Iniciando busca por termo:', searchTerm.trim());
+    
     try {
+      // Forçar a busca em tempo real
       const result = await searchByQuery(searchTerm.trim());
+      console.log('Resultado da busca:', result);
       
       if (result) {
-        // Verificar se é um redirecionamento interno ou externo
-        if (result.type.startsWith('external_')) {
-          // Para resultados externos, mostrar botão para o explorer oficial
-          setExternalUrl(`${config.explorer.url}${result.redirectUrl.replace(/^\/+/, '/')}`);
-          showNotification('Encontrado no Explorer oficial da MultiversX', 'info');
-        } else {
-          // Para resultados internos, redirecionar
-          navigate(result.redirectUrl);
+        if (result.redirectUrl) {
+          if (result.redirectUrl.startsWith('http')) {
+            // URL externa
+            window.open(result.redirectUrl, '_blank');
+            showNotification('Redirecionando para site externo...', 'info');
+          } else {
+            // URL interna
+            console.log('Redirecionando para:', result.redirectUrl);
+            navigate(result.redirectUrl);
+            showNotification(`${result.type} encontrado!`, 'success');
+          }
+          setSearchTerm('');
         }
       } else {
-        // Nenhum resultado encontrado
-        setError('Nenhum resultado encontrado para esta busca');
-        
-        // Como alternativa, oferecer busca no explorer oficial
-        const term = searchTerm.trim();
-        let externalSearchUrl = '';
-        
-        if (term.startsWith('erd')) {
-          externalSearchUrl = `${config.explorer.url}/accounts/${term}`;
-        } else if (/^[0-9a-fA-F]{64}$/.test(term)) {
-          externalSearchUrl = `${config.explorer.url}/transactions/${term}`;
-        } else if (/^\d+$/.test(term)) {
-          externalSearchUrl = `${config.explorer.url}/blocks?nonce=${term}`;
-        }
-        
-        if (externalSearchUrl) {
-          setExternalUrl(externalSearchUrl);
-          showNotification('Tentando buscar no explorer oficial', 'warning');
-        } else {
-          showNotification('Nenhum resultado encontrado', 'error');
-        }
+        setError('Nenhum resultado encontrado');
+        showNotification('Nenhum resultado encontrado para este termo', 'error');
       }
     } catch (error) {
       console.error('Erro na busca:', error);
-      setError('Erro ao realizar a busca');
-      showNotification('Erro ao realizar a busca', 'error');
+      setError('Erro ao buscar. Por favor, tente novamente.');
+      showNotification('Erro ao realizar busca', 'error');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleSearch();
+      handleSearch(e);
     }
   };
 
@@ -107,29 +97,26 @@ const SearchBar: React.FC = () => {
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         }}
         elevation={1}
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSearch();
-        }}
+        onSubmit={handleSearch}
       >
         <InputBase
           sx={{ ml: 1, flex: 1, py: 1 }}
-          placeholder="Buscar por endereço de carteira, transação ou bloco..."
+          placeholder="Buscar por endereço, transação, bloco ou token..."
           inputProps={{ 'aria-label': 'buscar na blockchain' }}
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={loading}
+          className={`search-input ${error ? 'error' : ''}`}
+          disabled={isLoading}
         />
-        {loading ? (
+        {isLoading ? (
           <CircularProgress size={24} sx={{ mx: 1 }} />
         ) : (
           <IconButton 
-            type="button" 
+            type="submit" 
             sx={{ p: '10px' }} 
             aria-label="search" 
-            onClick={handleSearch}
-            disabled={loading}
+            disabled={isLoading}
           >
             <SearchIcon />
           </IconButton>

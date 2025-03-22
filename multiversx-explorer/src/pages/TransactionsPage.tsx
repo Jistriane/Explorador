@@ -118,6 +118,71 @@ const TransactionsPage: React.FC = () => {
     }
   }, []);
 
+  // Função específica para atualizar apenas as transações pendentes
+  const updatePendingTransactions = useCallback(async () => {
+    try {
+      console.log('Atualizando contagem de transações pendentes...');
+      
+      // Tentar obter dados da API principal
+      const response = await fetch('https://api.multiversx.com/transactions/count?status=pending', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store'
+      });
+      
+      if (response.ok) {
+        const pendingCount = await response.json();
+        console.log('Contagem de transações pendentes obtida diretamente:', pendingCount);
+        
+        if (typeof pendingCount === 'number' && !isNaN(pendingCount)) {
+          // Atualizar apenas o campo pendingTx
+          setTransactionStats(prev => ({
+            ...prev,
+            pendingTx: pendingCount
+          }));
+          return;
+        }
+      }
+      
+      // Se falhar, tentar obter do endpoint de estatísticas
+      const statsResponse = await fetch('https://api.multiversx.com/stats', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store'
+      });
+      
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json();
+        if (statsData && statsData.transactions && statsData.transactions.pending !== undefined) {
+          const pendingCount = Number(statsData.transactions.pending);
+          console.log('Contagem de transações pendentes obtida de stats:', pendingCount);
+          
+          setTransactionStats(prev => ({
+            ...prev,
+            pendingTx: pendingCount
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar transações pendentes:', error);
+    }
+  }, []);
+
+  // Configurar efeito específico para atualizar transações pendentes com maior frequência
+  useEffect(() => {
+    // Atualizar imediatamente ao montar
+    updatePendingTransactions();
+    
+    // Configurar um intervalo mais curto para atualizar as transações pendentes
+    const pendingUpdateInterval = setInterval(() => {
+      updatePendingTransactions();
+    }, 5000); // Atualizar a cada 5 segundos
+    
+    return () => {
+      clearInterval(pendingUpdateInterval);
+    };
+  }, [updatePendingTransactions]);
+
   /* eslint-disable react-hooks/exhaustive-deps */
   // Configurar carregamento inicial e atualizações periódicas
   useEffect(() => {
@@ -190,6 +255,11 @@ const TransactionsPage: React.FC = () => {
           return;
         }
         
+        // Destacar especificamente as transações pendentes para logging
+        if (statsData.transactions?.pending !== undefined) {
+          console.log('⭐ Transações pendentes recebidas via WebSocket:', statsData.transactions.pending);
+        }
+        
         // Sanitizar e converter dados
         const totalProcessed = statsData.transactions?.totalProcessed !== undefined 
           ? Number(statsData.transactions.totalProcessed) 
@@ -240,6 +310,11 @@ const TransactionsPage: React.FC = () => {
               tps: alternativeTps
             });
             
+            // Destacar dados alternativos de transações pendentes
+            if (alternativePending !== undefined) {
+              console.log('⭐ Transações pendentes alternativas:', alternativePending);
+            }
+            
             // Atualizar com dados alternativos
             setTransactionStats(prevStats => {
               // Criar nova cópia do estado atual
@@ -276,6 +351,7 @@ const TransactionsPage: React.FC = () => {
           }
           
           if (pending !== undefined && !isNaN(pending)) {
+            console.log('⭐ Atualizando transações pendentes para:', pending);
             newStats.pendingTx = pending;
           }
           

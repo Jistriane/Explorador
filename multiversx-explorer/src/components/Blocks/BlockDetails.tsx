@@ -183,16 +183,31 @@ const BlockDetails: React.FC = () => {
                 Validadores
               </Typography>
               <Box sx={{ mt: 1 }}>
-                {block.validators.map((validator, index) => (
-                  <Chip
-                    key={index}
-                    label={`${validator.substring(0, 8)}...`}
-                    component={Link}
-                    to={`/accounts/${validator}`}
-                    clickable
-                    sx={{ mr: 1, mb: 1 }}
-                  />
-                ))}
+                {Array.isArray(block.validators) 
+                  ? block.validators.map((validator, index) => (
+                      <Chip
+                        key={index}
+                        label={`${validator.substring(0, 8)}...`}
+                        component={Link}
+                        to={`/accounts/${validator}`}
+                        clickable
+                        sx={{ mr: 1, mb: 1 }}
+                      />
+                    ))
+                  : typeof block.validators === 'number' 
+                    ? Array.from({ length: block.validators }).map((_, index) => (
+                        <Chip
+                          key={index}
+                          label={`Validator ${index + 1}`}
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      ))
+                    : (
+                        <Typography variant="body2" color="textSecondary">
+                          Informação de validadores não disponível
+                        </Typography>
+                      )
+                }
               </Box>
             </Grid>
           </Grid>

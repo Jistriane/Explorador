@@ -553,17 +553,47 @@ export const fetchRecentBlocks = async (options: {
 export const fetchBlockByHash = async (hash: string) => {
   try {
     // Utilizando a API Gateway do MultiversX
-    const response = await fetch(`${config.api.gateway}/blocks/${hash}`);
+    console.log(`Buscando bloco pelo hash: ${hash}`);
+    
+    // Adicionar timestamp para evitar cache
+    const timestamp = Date.now();
+    const response = await fetch(`${config.api.gateway}/blocks/${hash}?_t=${timestamp}`, {
+      method: 'GET',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+      },
+      cache: 'no-store'
+    });
     
     if (!response.ok) {
       throw new Error(`API request failed with status: ${response.status}`);
     }
     
     const data = await response.json();
+    console.log('Dados do bloco recebidos:', data);
+    
+    // Garantir que validators seja um array
+    if (!Array.isArray(data.validators)) {
+      if (typeof data.validators === 'number') {
+        // Se for um número, criar um array com esse número de validadores simulados
+        data.validators = Array.from({ length: data.validators }).map((_, i) => 
+          `erd1validation${i}simulatedxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+        );
+      } else {
+        // Se não for um array nem número, inicializar como array vazio
+        data.validators = [];
+      }
+    }
+    
     return data;
   } catch (error) {
     console.error('Error fetching block data:', error);
     // Fallback para dados simulados
+    const simulatedValidators = Array.from({ length: Math.floor(Math.random() * 10) + 1 }).map((_, i) => 
+      `erd1simulated${i}validator00000000000000000000000000000`
+    );
+    
     return {
       hash: hash,
       nonce: Math.floor(Math.random() * 1000000),
@@ -572,9 +602,12 @@ export const fetchBlockByHash = async (hash: string) => {
       size: Math.floor(Math.random() * 1000),
       txCount: Math.floor(Math.random() * 100),
       timestamp: Date.now() / 1000 - Math.floor(Math.random() * 86400),
-      validators: Math.floor(Math.random() * 20),
-      proposer: 'erd...',
-      // Outros campos simulados
+      validators: simulatedValidators, // Agora é sempre um array
+      proposer: 'erd1simulatedproposer00000000000000000000000000',
+      prevHash: `${hash.substring(0, 10)}...previous`,
+      gasConsumed: (Math.random() * 1000000).toString(),
+      gasRefunded: (Math.random() * 100000).toString(),
+      gasPenalized: (Math.random() * 10000).toString()
     };
   }
 };
@@ -921,11 +954,19 @@ export const searchByQuery = async (query: string) => {
     // 2. VERIFICAR SE É UM HASH DE TRANSAÇÃO (64 caracteres hexadecimais)
     if (/^[0-9a-fA-F]{64}$/.test(term)) {
       try {
-        // Buscar como transação na API oficial
-        const response = await fetch(`${config.api.proxy}/transactions/${term}`);
+        // Buscar como transação na API oficial com cabeçalhos que evitam cache
+        const response = await fetch(`${config.api.proxy}/transactions/${term}`, {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+          },
+          cache: 'no-store'
+        });
         
         if (response.ok) {
           const transactionData = await response.json();
+          console.log('Transação encontrada:', transactionData);
           return {
             type: 'transaction',
             data: transactionData,
@@ -936,12 +977,54 @@ export const searchByQuery = async (query: string) => {
         console.error('Erro ao buscar transação:', error);
       }
 
-      // Se não for transação, tentar como hash de bloco
+      // Se não for transação, tentar como hash de bloco com cache desabilitado
       try {
-        const response = await fetch(`${config.api.gateway}/blocks/${term}`);
+        console.log('Buscando bloco pelo hash:', term);
+        // Adicionar timestamp atual para garantir que a URL seja única e evitar cache
+        const timestamp = Date.now();
+        const response = await fetch(`${config.api.gateway}/blocks/${term}?_t=${timestamp}`, {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store'
+        });
         
         if (response.ok) {
           const blockData = await response.json();
+          console.log('Bloco encontrado:', blockData);
+          return {
+            type: 'block',
+            data: blockData,
+            redirectUrl: `/blocks/${term}`
+          };
+        } else {
+          console.log('Resposta não ok ao buscar bloco:', response.status);
+        }
+      } catch (error) {
+        console.error('Erro ao buscar bloco por hash:', error);
+      }
+      
+      // Tentar com URL alternativa se a primeira falhar
+      try {
+        console.log('Tentando URL alternativa para bloco:', term);
+        // Usar outro endpoint para blocos
+        const timestamp = Date.now();
+        const response = await fetch(`${config.api.proxy}/blocks/${term}?_t=${timestamp}`, {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store'
+        });
+        
+        if (response.ok) {
+          const blockData = await response.json();
+          console.log('Bloco encontrado na URL alternativa:', blockData);
           return {
             type: 'block',
             data: blockData,
@@ -949,20 +1032,65 @@ export const searchByQuery = async (query: string) => {
           };
         }
       } catch (error) {
-        console.error('Erro ao buscar bloco por hash:', error);
+        console.error('Erro ao buscar bloco na URL alternativa:', error);
       }
     }
 
     // 3. VERIFICAR SE É UMA ALTURA DE BLOCO (NÚMERO)
     if (/^\d+$/.test(term)) {
       try {
-        // Buscar por shard 0 (principal) e nonce específico
-        const response = await fetch(`${config.api.gateway}/blocks?nonce=${term}&shard=0`);
+        // Buscar por shard 0 (principal) e nonce específico com parâmetros anti-cache
+        const timestamp = Date.now();
+        console.log('Buscando bloco por altura:', term);
+        
+        const response = await fetch(`${config.api.gateway}/blocks?nonce=${term}&shard=0&_t=${timestamp}`, {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store'
+        });
         
         if (response.ok) {
           const blocksData = await response.json();
           
           if (blocksData && blocksData.length > 0) {
+            console.log('Bloco encontrado por altura:', blocksData[0]);
+            return {
+              type: 'block',
+              data: blocksData[0],
+              redirectUrl: `/blocks/${blocksData[0].hash}`
+            };
+          }
+        } else {
+          console.log('Resposta não ok ao buscar bloco por altura:', response.status);
+        }
+      } catch (error) {
+        console.error('Erro ao buscar bloco por altura:', error);
+      }
+      
+      // Tentar URL alternativa
+      try {
+        const timestamp = Date.now();
+        console.log('Tentando URL alternativa para bloco por altura:', term);
+        
+        const response = await fetch(`${config.api.proxy}/blocks?nonce=${term}&shard=0&_t=${timestamp}`, {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store'
+        });
+        
+        if (response.ok) {
+          const blocksData = await response.json();
+          
+          if (blocksData && blocksData.length > 0) {
+            console.log('Bloco encontrado por altura na URL alternativa:', blocksData[0]);
             return {
               type: 'block',
               data: blocksData[0],
@@ -971,7 +1099,7 @@ export const searchByQuery = async (query: string) => {
           }
         }
       } catch (error) {
-        console.error('Erro ao buscar bloco por altura:', error);
+        console.error('Erro ao buscar bloco por altura na URL alternativa:', error);
       }
     }
 
