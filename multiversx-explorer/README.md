@@ -1,9 +1,11 @@
 # MultiversX Explorer
 
 ## Sobre o Projeto
+
 MultiversX Explorer é uma aplicação web para visualização e interação com a blockchain MultiversX. Permite aos usuários explorar blocos, transações, contas e estatísticas da rede em tempo real.
 
 ## Funcionalidades
+
 - Visualização de estatísticas da rede em tempo real
 - Exploração de blocos e transações
 - Busca por endereços, hashes de transações e blocos
@@ -11,37 +13,43 @@ MultiversX Explorer é uma aplicação web para visualização e interação com
 - Atualizações via WebSocket para dados em tempo real
 
 ## Tecnologias Utilizadas
-- React 19
+
+- React 18
 - TypeScript
 - Material UI
 - Apollo Client para GraphQL
 - WebSockets para atualizações em tempo real
 
 ## Pré-requisitos
-- Node.js (versão 14 ou superior)
-- npm (versão 7 ou superior)
+
+- Node.js (versão 16 ou superior)
+- npm (versão 8 ou superior)
 
 ## Instalação
 
 Clone o repositório:
+
 ```bash
 git clone https://github.com/seu-usuario/multiversx-explorer.git
 cd multiversx-explorer
 ```
 
 Instale as dependências:
+
 ```bash
 npm install
 ```
 
 ## Executando em Ambiente de Desenvolvimento
+
 ```bash
-npm run start
+npm run dev
 ```
 
 O aplicativo estará disponível em `http://localhost:3000`.
 
 ## Criando Build de Produção
+
 ```bash
 npm run build
 ```
@@ -49,27 +57,35 @@ npm run build
 ## Deploy
 
 ### Deploy com Vercel
+
 O método mais simples para fazer deploy é usando o Vercel:
 
 1. Criar uma conta em [vercel.com](https://vercel.com)
 2. Instalar a CLI do Vercel:
+
    ```bash
    npm install -g vercel
    ```
+
 3. Login na sua conta:
+
    ```bash
    vercel login
    ```
+
 4. Deploy do projeto:
+
    ```bash
    vercel
    ```
 
 ### Deploy com Netlify
+
 Também é possível fazer deploy usando o Netlify:
 
 1. Criar uma conta em [netlify.com](https://netlify.com)
 2. Deploy do projeto:
+
    ```bash
    npm install -g netlify-cli
    netlify login
@@ -77,23 +93,26 @@ Também é possível fazer deploy usando o Netlify:
    ```
 
 ### Deploy em servidor próprio
+
 Para fazer deploy em um servidor próprio:
 
 1. Gere o build do projeto:
+
    ```bash
    npm run build
    ```
 
-2. Copie a pasta `build` para o seu servidor web (Apache, Nginx, etc.)
+2. Copie a pasta `dist` para o seu servidor web (Apache, Nginx, etc.)
 
 3. Configure seu servidor web para servir a aplicação:
 
    **Exemplo para Nginx:**
-   ```
+
+   ```nginx
    server {
      listen 80;
      server_name seu-dominio.com;
-     root /caminho/para/build;
+     root /caminho/para/dist;
      index index.html;
      
      location / {
@@ -103,6 +122,7 @@ Para fazer deploy em um servidor próprio:
    ```
 
 ## Contribuição
+
 Contribuições são bem-vindas! Para contribuir:
 
 1. Faça um fork do projeto
@@ -112,6 +132,7 @@ Contribuições são bem-vindas! Para contribuir:
 5. Abra um Pull Request
 
 ## Licença
+
 Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
 
 ## Estrutura do Projeto

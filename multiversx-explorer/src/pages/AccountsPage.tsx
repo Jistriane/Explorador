@@ -28,7 +28,7 @@ const useQuery = () => {
 };
 
 // Intervalo de atualização em milissegundos (para fallback quando websocket não estiver disponível)
-const AUTO_REFRESH_INTERVAL = 15000; // 15 segundos
+const AUTO_REFRESH_INTERVAL = 30000; // 30 segundos
 
 const AccountsPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
@@ -325,7 +325,7 @@ const AccountsPage: React.FC = () => {
               <Tooltip title="Conectando...">
                 <span style={{ marginRight: '10px', color: 'orange', fontSize: '0.9rem' }}>
                   <span style={{ marginRight: '5px' }}>•</span>
-                  Atualizando a cada 15s
+                  Atualizando a cada 30s
                 </span>
               </Tooltip>
             )}

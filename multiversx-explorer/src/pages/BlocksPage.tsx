@@ -29,7 +29,7 @@ const useQuery = () => {
 };
 
 // Intervalo de atualização em milissegundos (para fallback quando websocket não estiver disponível)
-const AUTO_REFRESH_INTERVAL = 15000; // 15 segundos
+const AUTO_REFRESH_INTERVAL = 30000; // 30 segundos
 
 const BlocksPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
@@ -63,15 +63,18 @@ const BlocksPage: React.FC = () => {
       
       // Carregar estatísticas da rede MultiversX
       const networkStats = await fetchNetworkStats();
+      console.log('Estatísticas da rede recebidas:', networkStats);
       
       // Carregar blocos recentes para análise
       const blocks = await fetchRecentBlocks({ page: 1, itemsPerPage: 25 });
+      console.log(`${blocks.length} blocos recentes obtidos`);
       setRecentBlocks(blocks);
       setNewBlocksCount(0); // Resetar contador de novos blocos
       
       if (networkStats && blocks.length > 0) {
         // Usar a API para o total de blocos
-        const totalBlocks = networkStats.blocks || 0;
+        const totalBlocks = networkStats.blocks || networkStats.blocksTotal || 0;
+        console.log('Total de blocos:', totalBlocks);
         
         // Calcular o tempo médio entre blocos com base nos blocos recentes
         let totalTime = 0;
@@ -79,10 +82,12 @@ const BlocksPage: React.FC = () => {
           totalTime += blocks[i - 1].timestamp - blocks[i].timestamp;
         }
         const avgBlockTime = blocks.length > 1 ? totalTime / (blocks.length - 1) : 0;
+        console.log('Tempo médio entre blocos:', avgBlockTime);
         
         // Calcular a média de transações por bloco
         const totalTx = blocks.reduce((sum, block) => sum + block.txCount, 0);
         const avgTxPerBlock = blocks.length > 0 ? totalTx / blocks.length : 0;
+        console.log('Média de transações por bloco:', avgTxPerBlock);
         
         setBlockStats({
           lastBlock: blocks[0]?.nonce || 0,
@@ -90,11 +95,27 @@ const BlocksPage: React.FC = () => {
           avgBlockTime,
           avgTxPerBlock
         });
+      } else {
+        console.warn('Não foi possível obter estatísticas ou blocos');
+        // Usar valores de fallback
+        setBlockStats({
+          lastBlock: blocks[0]?.nonce || 0,
+          totalBlocks: 0,
+          avgBlockTime: 0,
+          avgTxPerBlock: 0
+        });
       }
       
       setLastRefreshTime(new Date());
     } catch (error) {
       console.error('Erro ao carregar estatísticas:', error);
+      // Usar valores de fallback em caso de erro
+      setBlockStats({
+        lastBlock: 0,
+        totalBlocks: 0,
+        avgBlockTime: 0,
+        avgTxPerBlock: 0
+      });
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -151,6 +172,7 @@ const BlocksPage: React.FC = () => {
       
       // Atualize as estatísticas relevantes aos blocos
       if (statsData.blocks !== undefined) {
+        console.log('Atualizando total de blocos:', statsData.blocks);
         setBlockStats(prevStats => ({
           ...prevStats,
           totalBlocks: statsData.blocks
@@ -255,7 +277,7 @@ const BlocksPage: React.FC = () => {
               <Tooltip title="Conectando...">
                 <span style={{ marginRight: '10px', color: 'orange', fontSize: '0.9rem' }}>
                   <span style={{ marginRight: '5px' }}>•</span>
-                  Atualizando a cada 15s
+                  Atualizando a cada 30s
                 </span>
               </Tooltip>
             )}

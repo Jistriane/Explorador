@@ -1,5 +1,4 @@
-import config from '../config';
-import { EventEmitter } from 'events';
+import { WebSocket, ErrorEvent } from 'ws';
 
 // Tipos de eventos que serão emitidos pelo websocket
 export enum WebSocketEventType {
@@ -9,52 +8,16 @@ export enum WebSocketEventType {
   STATS = 'stats',
   CONNECTED = 'connected',
   DISCONNECTED = 'disconnected',
-  ERROR = 'error'
+  ERROR = 'error',
+  STATS_UPDATE = 'stats_update'
 }
 
-// URLs dos websockets do MultiversX
-const WS_URLS = {
-  blocks: 'wss://gateway.multiversx.com/blocks',
-  transactions: 'wss://gateway.multiversx.com/transactions',
-  accounts: 'wss://gateway.multiversx.com/accounts',
-  stats: 'wss://gateway.multiversx.com/stats'
-};
-
-// URLs alternativas (testnet) como fallback
-const FALLBACK_URLS = {
-  blocks: 'wss://testnet-gateway.multiversx.com/blocks',
-  transactions: 'wss://testnet-gateway.multiversx.com/transactions',
-  accounts: 'wss://testnet-gateway.multiversx.com/accounts', 
-  stats: 'wss://testnet-gateway.multiversx.com/stats'
-};
-
-// URLs para API pública alternativa
-const PUBLIC_API_URLS = {
-  blocks: 'wss://api.multiversx.com/blocks',
-  transactions: 'wss://api.multiversx.com/transactions',
-  accounts: 'wss://api.multiversx.com/accounts',
-  stats: 'wss://api.multiversx.com/stats'  
-};
-
-// Flag para controlar se devemos usar os WebSockets ou operar em modo fallback
-const USE_WEBSOCKETS = true;
-
-// Flag para usar dados simulados quando WebSockets falham completamente
-const USE_MOCK_DATA = true;
-
-// Intervalo para emitir eventos simulados (em milissegundos)
-const MOCK_EVENT_INTERVAL = 10000; // 10 segundos entre possíveis atualizações de blocos
-
-// Objeto para rastrear todas as conexões WebSocket ativas
-const connections: Record<string, WebSocket | null> = {
-  blocks: null,
-  transactions: null,
-  accounts: null,
-  stats: null,
-};
+// Tipos para as URLs do WebSocket
+type WebSocketType = 'blocks' | 'transactions' | 'accounts' | 'stats';
+type WebSocketEnvironment = 'mainnet' | 'testnet' | 'public';
 
 // URLs de WebSocket para diferentes ambientes
-const WEBSOCKET_URLS = {
+const WEBSOCKET_URLS: Record<WebSocketEnvironment, Record<WebSocketType, string>> = {
   mainnet: {
     blocks: 'wss://gateway.multiversx.com/blocks',
     transactions: 'wss://gateway.multiversx.com/transactions',
@@ -76,10 +39,10 @@ const WEBSOCKET_URLS = {
 };
 
 // Opção atual do ambiente (pode ser alterada através de configuração)
-let currentEnv: 'mainnet' | 'testnet' | 'public' = 'mainnet';
+let currentEnv: WebSocketEnvironment = 'mainnet';
 
 // Rastreadores de tentativas de reconexão para cada tipo
-const reconnectAttempts: Record<string, number> = {
+const reconnectAttempts: Record<WebSocketType, number> = {
   blocks: 0,
   transactions: 0,
   accounts: 0,
@@ -89,441 +52,361 @@ const reconnectAttempts: Record<string, number> = {
 // Intervalo máximo de reconexão (5 minutos)
 const MAX_RECONNECT_DELAY = 300000;
 
-// Intervalos de ping para manter as conexões ativas
-const pingIntervals: Record<string, NodeJS.Timeout | null> = {
+// Definir tipos para os intervalos de ping
+type PingIntervals = Record<WebSocketType, NodeJS.Timeout | undefined>;
+
+// Inicializar o objeto de intervalos de ping
+const pingIntervals: PingIntervals = {
+  blocks: undefined,
+  transactions: undefined,
+  accounts: undefined,
+  stats: undefined
+};
+
+// Definir tipo para as conexões WebSocket
+type WebSocketConnections = Record<WebSocketType, any | null>;
+
+// Inicializar o objeto de conexões
+const connections: WebSocketConnections = {
   blocks: null,
   transactions: null,
   accounts: null,
-  stats: null,
+  stats: null
 };
 
-// Classe para gerenciar conexões websocket
-class WebSocketService {
-  private events: EventEmitter;
-  private connections: Record<string, WebSocket | null> = {
-    blocks: null,
-    transactions: null,
-    accounts: null,
-    stats: null,
-  };
-  private reconnectTimeouts: Map<string, NodeJS.Timeout>;
-  private isReconnecting: Map<string, boolean>;
-  private maxReconnectAttempts: number;
-  private reconnectDelay: number;
-  private reconnectAttempts: Record<string, number> = {
-    blocks: 0,
-    transactions: 0,
-    accounts: 0,
-    stats: 0,
-  };
-  private mockIntervals: { [key: string]: NodeJS.Timeout } = {};
-  private pingIntervals: Record<string, NodeJS.Timeout | null> = {
-    blocks: null,
-    transactions: null,
-    accounts: null,
-    stats: null,
-  };
-  private currentEnv: 'mainnet' | 'testnet' | 'public' = 'mainnet';
-  private readonly MAX_RECONNECT_DELAY = 300000; // 5 minutos
+// Eventos registrados
+const eventHandlers: Record<WebSocketEventType, Set<Function>> = {
+  [WebSocketEventType.CONNECTED]: new Set(),
+  [WebSocketEventType.DISCONNECTED]: new Set(),
+  [WebSocketEventType.ERROR]: new Set(),
+  [WebSocketEventType.BLOCK]: new Set(),
+  [WebSocketEventType.TRANSACTION]: new Set(),
+  [WebSocketEventType.ACCOUNT]: new Set(),
+  [WebSocketEventType.STATS]: new Set(),
+  [WebSocketEventType.STATS_UPDATE]: new Set(),
+};
 
-  constructor() {
-    this.events = new EventEmitter();
-    this.reconnectTimeouts = new Map();
-    this.isReconnecting = new Map();
-    this.maxReconnectAttempts = 10;
-    this.reconnectDelay = 3000; // Delay inicial de 3 segundos
+// Função para calcular o delay de reconexão exponencial
+const getReconnectDelay = (attempts: number): number => {
+  const baseDelay = 1000; // 1 segundo
+  const maxDelay = MAX_RECONNECT_DELAY;
+  const delay = Math.min(baseDelay * Math.pow(2, attempts), maxDelay);
+  return delay + Math.random() * 1000; // Adicionar jitter
+};
 
-    // Aumentar limite de listeners para evitar avisos
-    this.events.setMaxListeners(30);
+// Função para validar dados recebidos
+const validateWebSocketData = (data: any, type: string): boolean => {
+  try {
+    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    
+    switch (type) {
+      case 'blocks':
+        return parsed && typeof parsed.nonce === 'number' && typeof parsed.hash === 'string';
+      case 'transactions':
+        return parsed && typeof parsed.hash === 'string' && typeof parsed.sender === 'string';
+      case 'accounts':
+        return parsed && typeof parsed.address === 'string' && typeof parsed.balance === 'string';
+      case 'stats':
+        return parsed && typeof parsed === 'object' && 
+               typeof parsed.transactions === 'object' &&
+               typeof parsed.accounts === 'object';
+      default:
+        return true;
+    }
+  } catch (error) {
+    console.error(`Erro ao validar dados do WebSocket ${type}:`, error);
+    return false;
+  }
+};
+
+// Função para processar mensagens recebidas
+const processWebSocketMessage = (data: any, type: string) => {
+  if (!validateWebSocketData(data, type)) {
+    console.warn(`Dados inválidos recebidos do WebSocket ${type}:`, data);
+    return;
   }
 
-  // Wrapper seguro para emitir eventos, prevenindo erros não tratados
-  private safeEmit(event: WebSocketEventType, data: any): void {
+  const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+  
+  switch (type) {
+    case 'blocks':
+      eventHandlers[WebSocketEventType.BLOCK].forEach(handler => handler(parsed));
+      break;
+    case 'transactions':
+      eventHandlers[WebSocketEventType.TRANSACTION].forEach(handler => handler(parsed));
+      break;
+    case 'accounts':
+      eventHandlers[WebSocketEventType.ACCOUNT].forEach(handler => handler(parsed));
+      break;
+    case 'stats':
+      eventHandlers[WebSocketEventType.STATS].forEach(handler => handler(parsed));
+      break;
+  }
+};
+
+// Função para criar conexão WebSocket
+const createWebSocket = (type: WebSocketType): WebSocket => {
+  const url = WEBSOCKET_URLS[currentEnv][type];
+  const ws = new WebSocket(url);
+  
+  ws.onopen = () => {
+    console.log(`WebSocket ${type} conectado`);
+    reconnectAttempts[type] = 0;
+    eventHandlers[WebSocketEventType.CONNECTED].forEach(handler => 
+      handler({ type, timestamp: new Date().toISOString() })
+    );
+    
+    // Iniciar ping
+    if (pingIntervals[type]) {
+      clearInterval(pingIntervals[type]);
+    }
+    pingIntervals[type] = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 30000); // Ping a cada 30 segundos
+  };
+  
+  ws.onclose = () => {
+    console.log(`WebSocket ${type} desconectado`);
+    eventHandlers[WebSocketEventType.DISCONNECTED].forEach(handler => 
+      handler({ type, timestamp: new Date().toISOString() })
+    );
+    
+    // Limpar intervalo de ping
+    if (pingIntervals[type]) {
+      clearInterval(pingIntervals[type]);
+      pingIntervals[type] = undefined;
+    }
+    
+    // Tentar reconectar
+    setTimeout(() => {
+      if (!connections[type]) {
+        console.log(`Tentando reconectar WebSocket ${type}...`);
+        createWebSocket(type);
+      }
+    }, 5000);
+  };
+  
+  ws.onerror = (event: ErrorEvent) => {
+    console.error(`Erro no WebSocket ${type}:`, event);
+    eventHandlers[WebSocketEventType.ERROR].forEach(handler => 
+      handler({ type, error: 'Erro na conexão WebSocket', timestamp: new Date().toISOString() })
+    );
+  };
+  
+  ws.onmessage = (event) => {
     try {
-      // Garantir que data é sempre um objeto válido
-      const safeData = data === undefined || data === null 
-        ? { timestamp: new Date().toISOString() } 
-        : typeof data === 'object' 
-          ? { ...data, timestamp: data.timestamp || new Date().toISOString() }
-          : { value: data, timestamp: new Date().toISOString() };
-      
-      // Log para depuração
-      console.debug(`Emitindo evento ${event}:`, safeData);
-      
-      // Emitir o evento com dados seguros
-      this.events.emit(event, safeData);
+      // Converter os dados recebidos para string antes de fazer o parse
+      const dataString = event.data.toString();
+      const data = JSON.parse(dataString);
+      console.log(`Dados recebidos do WebSocket ${type}:`, data);
+
+      // Processar diferentes tipos de mensagens
+      switch (data.type) {
+        case 'block':
+          if (data.block) {
+            console.log('Novo bloco recebido:', data.block);
+            // Atualizar estatísticas com o novo bloco
+            if (data.block.nonce) {
+              const currentStats = {
+                blocks: data.block.nonce,
+                blocksTotal: data.block.nonce,
+                timestamp: new Date().toISOString()
+              };
+              // Emitir evento de atualização
+              eventHandlers[WebSocketEventType.STATS_UPDATE].forEach(handler => handler(currentStats));
+            }
+          }
+          break;
+        case 'transaction':
+          if (data.transaction) {
+            console.log('Nova transação recebida:', data.transaction);
+            // Atualizar contador de transações
+            const currentStats = {
+              transactions: {
+                totalProcessed: (data.transaction.nonce || 0) + 1,
+                pending: data.transaction.pending || 0
+              },
+              timestamp: new Date().toISOString()
+            };
+            // Emitir evento de atualização
+            eventHandlers[WebSocketEventType.STATS_UPDATE].forEach(handler => handler(currentStats));
+          }
+          break;
+        case 'account':
+          if (data.account) {
+            console.log('Nova conta atualizada:', data.account);
+            // Atualizar contador de contas ativas
+            const currentStats = {
+              accounts: {
+                active: (data.account.active || 0) + 1,
+                active24h: data.account.active24h || 0
+              },
+              timestamp: new Date().toISOString()
+            };
+            // Emitir evento de atualização
+            eventHandlers[WebSocketEventType.STATS_UPDATE].forEach(handler => handler(currentStats));
+          }
+          break;
+        case 'stats':
+          if (data.stats) {
+            console.log('Estatísticas atualizadas:', data.stats);
+            // Garantir que temos os dados de transações e contas
+            if (data.stats.transactions || data.stats.accounts) {
+              const currentStats = {
+                transactions: data.stats.transactions ? {
+                  totalProcessed: Number(data.stats.transactions.totalProcessed) || 0,
+                  pending: Number(data.stats.transactions.pending) || 0
+                } : undefined,
+                accounts: data.stats.accounts ? {
+                  active: Number(data.stats.accounts.active) || 0,
+                  active24h: Number(data.stats.accounts.active24h) || 0
+                } : undefined,
+                timestamp: new Date().toISOString()
+              };
+              // Emitir evento de atualização
+              eventHandlers[WebSocketEventType.STATS_UPDATE].forEach(handler => handler(currentStats));
+            }
+          }
+          break;
+        case 'pong':
+          console.log(`Pong recebido do WebSocket ${type}`);
+          break;
+      }
     } catch (error) {
-      console.error(`Erro ao emitir evento ${event}:`, error);
-      // Não propagar o erro
+      console.error(`Erro ao processar mensagem do WebSocket ${type}:`, error);
     }
-  }
+  };
+  
+  return ws;
+};
 
-  /**
-   * Inicializa e conecta a um WebSocket para receber atualizações em tempo real
-   * @param type Tipo de dados (blocks, transactions, accounts, stats)
-   */
-  public connect(type: string): void {
-    if (!USE_WEBSOCKETS) {
-      console.log(`WebSockets desativados. Usando simulação para ${type}`);
-      this.startMockDataEmission(type);
-      return;
+// Adicionar método disconnectAll
+const disconnectAll = () => {
+  console.log('Desconectando todas as conexões WebSocket...');
+  
+  // Desconectar cada tipo de conexão
+  (Object.keys(connections) as WebSocketType[]).forEach((type) => {
+    const connection = connections[type];
+    if (connection && typeof connection.close === 'function') {
+      console.log(`Desconectando WebSocket ${type}`);
+      connection.close();
+      connections[type] = null;
     }
-
-    // Obter URL do ambiente atual
-    const url = WEBSOCKET_URLS[this.currentEnv][type as keyof typeof WEBSOCKET_URLS.mainnet];
-    if (url) {
-      this.connectToWebSocket(type, url);
-    } else {
-      console.error(`URL de WebSocket não encontrada para o tipo: ${type}`);
-      this.startMockDataEmission(type);
+    
+    // Limpar intervalo de ping
+    if (pingIntervals[type]) {
+      clearInterval(pingIntervals[type]);
+      pingIntervals[type] = undefined;
     }
-  }
+  });
+};
 
-  /**
-   * Conecta a um WebSocket específico
-   * @param type Tipo de conexão
-   * @param url URL do WebSocket
-   */
-  private connectToWebSocket(type: string, wsUrl: string): void {
-    // Se já existe uma conexão ativa, não faz nada
-    if (this.connections[type] && this.connections[type]?.readyState === WebSocket.OPEN) {
-      return;
-    }
-
+// Serviço WebSocket
+const websocketService = {
+  connect: (type: WebSocketType) => {
     try {
-      console.log(`Conectando WebSocket para ${type} em ${wsUrl}...`);
-      
-      const socket = new WebSocket(wsUrl);
-      this.connections[type] = socket;
-      this.reconnectAttempts[type] = 0;
+      // Verificar se já existe uma conexão
+      if (connections[type]) {
+        console.log(`WebSocket ${type} já está conectado`);
+        return;
+      }
 
-      // Configurar timeout para verificar se a conexão foi estabelecida
-      const connectionTimeout = setTimeout(() => {
-        if (socket.readyState !== WebSocket.OPEN) {
-          console.log(`Timeout na conexão WebSocket para ${type}. Tentando URL de fallback...`);
-          socket.close();
-          
-          // Tentar próximo ambiente
-          this.switchToNextEnvironment();
-          this.reconnectAttempts[type]++;
-          
-          // Reconectar com atraso
-          const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts[type]), this.MAX_RECONNECT_DELAY);
-          setTimeout(() => {
-            this.connect(type);
-          }, delay);
-        }
-      }, 5000); // 5 segundos para timeout de conexão
+      // Limpar conexão anterior se existir
+      if (connections[type]) {
+        connections[type]?.close();
+        connections[type] = null;
+      }
 
-      socket.onopen = () => {
-        clearTimeout(connectionTimeout);
-        console.log(`WebSocket ${type} conectado com sucesso em ${wsUrl}`);
-        this.safeEmit(WebSocketEventType.CONNECTED, { type, url: wsUrl });
-        this.reconnectAttempts[type] = 0;
-        
-        // Enviar ping periódico para manter a conexão ativa
-        const pingInterval = setInterval(() => {
-          if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ action: 'ping' }));
-            console.log(`Ping enviado para WebSocket ${type}`);
-          } else {
-            clearInterval(pingInterval);
+      // Limpar intervalo de ping anterior
+      if (pingIntervals[type]) {
+        clearInterval(pingIntervals[type]);
+        pingIntervals[type] = undefined;
+      }
+
+      // Criar nova conexão
+      const ws = createWebSocket(type);
+      connections[type] = ws;
+
+      ws.onopen = () => {
+        console.log(`WebSocket ${type} conectado`);
+        // Iniciar ping para manter a conexão ativa
+        pingIntervals[type] = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
           }
         }, 30000); // Ping a cada 30 segundos
-        
-        // Armazenar o intervalo para limpar quando desconectar
-        this.pingIntervals[type] = pingInterval;
       };
 
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          // Log específico para depuração de estatísticas
-          if (type === 'stats') {
-            console.log(`Dados de estatísticas recebidos do websocket:`, data);
-            
-            // Garantir que os dados tenham uma estrutura mínima esperada
-            const formattedStats = {
-              ...data,
-              transactions: {
-                ...(data.transactions || {}),
-                totalProcessed: data.transactions?.totalProcessed || 0,
-                pending: data.transactions?.pending || 0
-              },
-              tps: data.tps || 0
-            };
-            
-            // Emitir evento com dados estruturados
-            this.safeEmit(WebSocketEventType.STATS, formattedStats);
-            return;
-          }
-          
-          // Processamento para outros tipos de dados
-          switch (type) {
-            case 'blocks':
-              this.safeEmit(WebSocketEventType.BLOCK, data);
-              break;
-            case 'transactions':
-              this.safeEmit(WebSocketEventType.TRANSACTION, data);
-              break;
-            case 'accounts':
-              this.safeEmit(WebSocketEventType.ACCOUNT, data);
-              break;
-            default:
-              // Caso o tipo não seja reconhecido, tenta inferir pelo conteúdo
-              if (data.hash && data.nonce) {
-                this.safeEmit(WebSocketEventType.BLOCK, data);
-              } else if (data.hash && data.sender && data.receiver) {
-                this.safeEmit(WebSocketEventType.TRANSACTION, data);
-              } else if (data.address) {
-                this.safeEmit(WebSocketEventType.ACCOUNT, data);
-              } else if (data.transactions || data.tps) {
-                // Se contém informações de transações ou TPS, provavelmente são estatísticas
-                this.safeEmit(WebSocketEventType.STATS, data);
-              } else {
-                console.log(`Dados recebidos para tipo desconhecido (${type}):`, data);
-              }
-          }
-        } catch (error) {
-          console.error(`Erro ao processar mensagem do WebSocket ${type}:`, error);
-        }
-      };
-
-      socket.onerror = (error) => {
+      ws.onerror = (error) => {
         console.error(`Erro no WebSocket ${type}:`, error);
-        this.safeEmit(WebSocketEventType.ERROR, { 
-          type, 
-          error: error instanceof Error ? error.message : String(error),
-          timestamp: new Date().toISOString()
-        });
-        
-        // Tentar com URL de fallback se a conexão principal falhar
-        if (this.reconnectAttempts[type] === 0) {
-          console.log(`Tentando conectar à URL de fallback para ${type}`);
-          this.switchToNextEnvironment();
-          this.connect(type);
-        }
+        // Tentar reconectar após um erro
+        setTimeout(() => {
+          if (connections[type]) {
+            console.log(`Tentando reconectar WebSocket ${type}...`);
+            websocketService.disconnect(type);
+            websocketService.connect(type);
+          }
+        }, 5000);
       };
 
-      socket.onclose = () => {
+      ws.onclose = () => {
         console.log(`WebSocket ${type} desconectado`);
-        this.safeEmit(WebSocketEventType.DISCONNECTED, { type });
-        
-        // Limpar o intervalo de ping
-        if (this.pingIntervals[type]) {
-          clearInterval(this.pingIntervals[type]!);
-          this.pingIntervals[type] = null;
+        // Limpar intervalo de ping
+        if (pingIntervals[type]) {
+          clearInterval(pingIntervals[type]);
+          pingIntervals[type] = undefined;
         }
-        
-        // Reconectar automaticamente, com backoff exponencial
-        this.handleReconnect(type);
+        // Tentar reconectar
+        setTimeout(() => {
+          if (!connections[type]) {
+            console.log(`Tentando reconectar WebSocket ${type}...`);
+            websocketService.connect(type);
+          }
+        }, 5000);
       };
     } catch (error) {
-      console.error(`Erro ao inicializar WebSocket ${type}:`, error);
-      this.startMockDataEmission(type);
+      console.error(`Erro ao conectar WebSocket ${type}:`, error);
     }
-  }
-
-  /**
-   * Lida com a reconexão após falha
-   * @param type Tipo de WebSocket
-   */
-  private handleReconnect(type: string): void {
-    // Se já está em processo de reconexão, não inicia outro
-    if (this.isReconnecting.get(type)) {
-      return;
-    }
-
-    const attempts = this.reconnectAttempts[type] || 0;
-    
-    // Verificar se excedeu o número máximo de tentativas
-    if (attempts >= this.maxReconnectAttempts) {
-      console.error(`Número máximo de tentativas de reconexão atingido para WebSocket ${type}`);
-      return;
-    }
-
-    this.isReconnecting.set(type, true);
-    const delay = Math.min(this.reconnectDelay * Math.pow(2, attempts), this.MAX_RECONNECT_DELAY);
-    
-    console.log(`Tentando reconectar WebSocket ${type} em ${delay}ms (tentativa ${attempts + 1}/${this.maxReconnectAttempts})`);
-    
-    // Configurar timeout para reconexão
-    const timeout = setTimeout(() => {
-      this.reconnectAttempts[type] = attempts + 1;
-      this.isReconnecting.set(type, false);
-      this.connect(type);
-    }, delay);
-    
-    this.reconnectTimeouts.set(type, timeout);
-  }
-
-  /**
-   * Troca para o próximo ambiente em caso de falha
-   */
-  private switchToNextEnvironment(): void {
-    const envs: Array<'mainnet' | 'testnet' | 'public'> = ['mainnet', 'testnet', 'public'];
-    const currentIndex = envs.indexOf(this.currentEnv);
-    const nextIndex = (currentIndex + 1) % envs.length;
-    this.currentEnv = envs[nextIndex];
-    console.log(`Ambiente trocado para: ${this.currentEnv}`);
-  }
-
-  /**
-   * Inicia emissão de dados simulados quando WebSockets estão indisponíveis
-   * @param type Tipo de dados (blocks, transactions, accounts, stats)
-   */
-  private startMockDataEmission(type: string): void {
-    // Se já existe um intervalo ativo, não cria outro
-    if (this.mockIntervals[type]) {
-      clearInterval(this.mockIntervals[type]);
-    }
-
-    console.log(`Iniciando emissão de dados simulados para ${type}`);
-
-    this.mockIntervals[type] = setInterval(() => {
-      // Gerar dados simulados com base no tipo
-      const mockData = this.generateMockData(type);
-      
-      // Emitir evento simulado
-      this.safeEmit(WebSocketEventType.BLOCK, mockData);
-    }, MOCK_EVENT_INTERVAL);
-  }
-
-  /**
-   * Gera dados simulados baseados no tipo
-   * @param type Tipo de dados
-   * @returns Dados simulados
-   */
-  private generateMockData(type: string): any {
-    // ... conteúdo existente ...
-  }
-
-  /**
-   * Desconecta de um WebSocket específico
-   * @param type Tipo de dados
-   */
-  public disconnect(type: string): void {
-    // Cancelar qualquer tentativa de reconexão pendente
-    if (this.reconnectTimeouts.has(type)) {
-      clearTimeout(this.reconnectTimeouts.get(type)!);
-      this.reconnectTimeouts.delete(type);
-    }
-
-    // Cancelar a simulação de dados, se estiver ativa
-    if (this.mockIntervals[type]) {
-      clearInterval(this.mockIntervals[type]);
-      delete this.mockIntervals[type];
-    }
-
-    // Limpar intervalo de ping
-    if (this.pingIntervals[type]) {
-      clearInterval(this.pingIntervals[type]!);
-      this.pingIntervals[type] = null;
-    }
-
-    // Fechar a conexão
-    const socket = this.connections[type];
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.close();
-      this.connections[type] = null;
-      console.log(`WebSocket ${type} desconectado manualmente`);
-    }
-  }
-
-  /**
-   * Desconecta de todos os WebSockets
-   */
-  public disconnectAll(): void {
-    console.log('Desconectando todos os WebSockets...');
-    
-    // Limpar todos os intervalos de mock
-    Object.keys(this.mockIntervals).forEach(key => {
-      clearInterval(this.mockIntervals[key]);
-    });
-    this.mockIntervals = {};
-    
-    // Limpar intervalos de ping
-    Object.keys(this.pingIntervals).forEach(type => {
-      if (this.pingIntervals[type]) {
-        clearInterval(this.pingIntervals[type]!);
-        this.pingIntervals[type] = null;
+  },
+  
+  disconnect: (type: WebSocketType) => {
+    try {
+      if (connections[type]) {
+        console.log(`Desconectando WebSocket ${type}`);
+        connections[type]?.close();
+        connections[type] = null;
       }
-    });
-    
-    // Cancelar todas as tentativas de reconexão
-    this.reconnectTimeouts.forEach((timeout, type) => {
-      clearTimeout(timeout);
-      this.reconnectTimeouts.delete(type);
-    });
-    
-    // Fechar todas as conexões
-    Object.keys(this.connections).forEach(type => {
-      const socket = this.connections[type];
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.close();
-        this.connections[type] = null;
-      }
-    });
-    
-    console.log('Todas as conexões foram encerradas');
-  }
-
-  /**
-   * Adiciona um listener para eventos do WebSocket
-   * @param event Tipo de evento
-   * @param listener Função callback
-   */
-  public on(event: WebSocketEventType, listener: (...args: any[]) => void): void {
-    this.events.on(event, listener);
-  }
-
-  /**
-   * Remove um listener de eventos
-   * @param event Tipo de evento
-   * @param listener Função callback
-   */
-  public off(event: WebSocketEventType, listener: (...args: any[]) => void): void {
-    this.events.off(event, listener);
-  }
-
-  /**
-   * Define o ambiente atual para as conexões
-   * @param env Ambiente (mainnet, testnet, public)
-   */
-  public setEnvironment(env: 'mainnet' | 'testnet' | 'public'): void {
-    if (this.currentEnv !== env) {
-      this.currentEnv = env;
-      console.log(`Ambiente WebSocket alterado para: ${env}`);
       
-      // Reconectar todas as conexões existentes
-      Object.keys(this.connections).forEach(type => {
-        if (this.connections[type]) {
-          this.disconnect(type);
-          this.connect(type);
-        }
-      });
+      // Limpar intervalo de ping
+      if (pingIntervals[type]) {
+        clearInterval(pingIntervals[type]);
+        pingIntervals[type] = undefined;
+      }
+    } catch (error) {
+      console.error(`Erro ao desconectar WebSocket ${type}:`, error);
     }
-  }
-
-  /**
-   * Retorna o ambiente atual
-   */
-  public getEnvironment(): string {
-    return this.currentEnv;
-  }
-
-  /**
-   * Verifica se um WebSocket está conectado
-   * @param type Tipo de WebSocket
-   */
-  public isConnected(type: string): boolean {
-    const socket = this.connections[type];
-    return !!(socket && socket.readyState === WebSocket.OPEN);
-  }
-}
-
-// Instância singleton
-const websocketService = new WebSocketService();
+  },
+  
+  on: (event: WebSocketEventType, handler: Function) => {
+    eventHandlers[event].add(handler);
+  },
+  
+  off: (event: WebSocketEventType, handler: Function) => {
+    eventHandlers[event].delete(handler);
+  },
+  
+  setEnvironment: (env: WebSocketEnvironment) => {
+    currentEnv = env;
+    // Reconectar todas as conexões com o novo ambiente
+    Object.keys(connections).forEach(type => {
+      websocketService.disconnect(type as WebSocketType);
+      websocketService.connect(type as WebSocketType);
+    });
+  },
+  
+  disconnectAll
+};
 
 export default websocketService; 

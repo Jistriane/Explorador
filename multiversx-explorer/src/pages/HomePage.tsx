@@ -21,12 +21,12 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchBar from '../components/SearchBar';
 import BlockList from '../components/Blocks/BlockList';
 import TransactionList from '../components/Transactions/TransactionList';
-import { fetchRecentBlocks, fetchRecentTransactions, fetchNetworkStats } from '../services/api';
+import { fetchRecentBlocks, fetchRecentTransactions, fetchNetworkStats, fetchAccounts } from '../services/api';
 import { Block, Transaction } from '../types';
 import websocketService, { WebSocketEventType } from '../services/websocket';
 
 // Intervalo de atualização em milissegundos (para fallback quando websocket não estiver disponível)
-const AUTO_REFRESH_INTERVAL = 15000;
+const AUTO_REFRESH_INTERVAL = 30000; // 30 segundos
 
 const HomePage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
@@ -256,17 +256,44 @@ const HomePage: React.FC = () => {
       // Verificar e formatar os dados recebidos
       const totalBlocks = networkData.blocks || 0;
       const totalTransactions = networkData.transactions?.totalProcessed || 0;
-      const activeAccounts = networkData.accounts?.active || 0;
-      const currentTps = networkData.tps || 0;
       
-      console.log('Estatísticas formatadas:');
-      console.log('- Total de blocos:', totalBlocks);
-      console.log('- Total de transações:', totalTransactions);
-      console.log('- Contas ativas:', activeAccounts);
-      console.log('- TPS:', currentTps);
+      // Obter contas ativas da API de contas
+      const accountsResponse = await fetchAccounts(1, 1);
+      const activeAccounts = networkData.accounts?.active || accountsResponse.totalCount || 0;
+      
+      // Obter TPS da página de transações
+      const currentTps = networkData.tps || 0;
+      console.log('TPS atual:', currentTps);
+      
+      // Se não tivermos TPS válido, tentar calcular com base nas transações recentes
+      if (!currentTps || currentTps === 0) {
+        try {
+          const transactions = await fetchRecentTransactions({ page: 1, itemsPerPage: 25 });
+          if (transactions && transactions.length > 0) {
+            // Calcular TPS com base nas transações recentes
+            const timeSpan = transactions[0].timestamp - transactions[transactions.length - 1].timestamp;
+            const totalTx = transactions.length;
+            const calculatedTps = timeSpan > 0 ? totalTx / timeSpan : 0;
+            console.log('TPS calculado com base nas transações recentes:', calculatedTps);
+            
+            // Atualizar o estado com o TPS calculado
+            setNetworkStats((prevStats: any) => ({
+              ...prevStats,
+              totalBlocks,
+              totalTransactions,
+              activeAccounts,
+              currentTps: calculatedTps
+            }));
+            return;
+          }
+        } catch (error) {
+          console.error('Erro ao calcular TPS com base nas transações recentes:', error);
+        }
+      }
       
       // Atualizar o estado com os valores validados
       setNetworkStats((prevStats: any) => ({
+        ...prevStats,
         totalBlocks,
         totalTransactions,
         activeAccounts,
@@ -278,12 +305,13 @@ const HomePage: React.FC = () => {
       console.error('Erro ao carregar estatísticas da rede na página inicial:', error);
       
       // Valores de fallback em caso de erro
-      setNetworkStats({
+      setNetworkStats((prevStats: any) => ({
+        ...prevStats,
         totalBlocks: 97530000,
         totalTransactions: 68543210,
         activeAccounts: 1800000,
         currentTps: 7.82
-      });
+      }));
     }
   }, []);
 
@@ -376,7 +404,7 @@ const HomePage: React.FC = () => {
               <Tooltip title="Atualizações periódicas">
                 <span style={{ marginRight: '10px', color: 'orange', fontSize: '0.9rem' }}>
                   <span style={{ marginRight: '5px' }}>•</span>
-                  Atualizando a cada 15s
+                  Atualizando a cada 30s
                 </span>
               </Tooltip>
             )}
