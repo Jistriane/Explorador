@@ -14,11 +14,12 @@ MultiversX Explorer é uma aplicação web para visualização e interação com
 
 ## Tecnologias Utilizadas
 
-- React 18
-- TypeScript
-- Material UI
-- Apollo Client para GraphQL
-- WebSockets para atualizações em tempo real
+- React 19
+- TypeScript 4.9.5
+- Material UI 6.4.8
+- Apollo Client 3.13.4 para GraphQL
+- React Router 7.4.0
+- Axios 1.8.4 para requisições HTTP
 
 ## Pré-requisitos
 
@@ -30,7 +31,7 @@ MultiversX Explorer é uma aplicação web para visualização e interação com
 Clone o repositório:
 
 ```bash
-git clone https://github.com/seu-usuario/multiversx-explorer.git
+git clone https://github.com/Jistriane/Explorador.git
 cd multiversx-explorer
 ```
 
@@ -43,83 +44,37 @@ npm install
 ## Executando em Ambiente de Desenvolvimento
 
 ```bash
-npm run dev
+npm start
 ```
 
 O aplicativo estará disponível em `http://localhost:3000`.
 
-## Criando Build de Produção
+## Scripts Disponíveis
 
-```bash
-npm run build
+- `npm start`: Inicia o servidor de desenvolvimento
+- `npm build`: Cria uma build de produção
+- `npm test`: Executa os testes
+- `npm eject`: Ejecta as configurações do Create React App
+
+## Estrutura do Projeto
+
+- `/src`: Código fonte da aplicação
+  - `/components`: Componentes reutilizáveis
+  - `/pages`: Páginas da aplicação
+  - `/services`: Serviços para comunicação com a API
+  - `/types`: Definições de tipos TypeScript
+- `/public`: Arquivos estáticos
+- `/docs`: Documentação do projeto
+- `/build`: Build de produção
+
+## Configuração do Ambiente
+
+O projeto utiliza variáveis de ambiente para configuração. Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
+
+```env
+REACT_APP_API_URL=sua_url_api
+REACT_APP_WS_URL=sua_url_websocket
 ```
-
-## Deploy
-
-### Deploy com Vercel
-
-O método mais simples para fazer deploy é usando o Vercel:
-
-1. Criar uma conta em [vercel.com](https://vercel.com)
-2. Instalar a CLI do Vercel:
-
-   ```bash
-   npm install -g vercel
-   ```
-
-3. Login na sua conta:
-
-   ```bash
-   vercel login
-   ```
-
-4. Deploy do projeto:
-
-   ```bash
-   vercel
-   ```
-
-### Deploy com Netlify
-
-Também é possível fazer deploy usando o Netlify:
-
-1. Criar uma conta em [netlify.com](https://netlify.com)
-2. Deploy do projeto:
-
-   ```bash
-   npm install -g netlify-cli
-   netlify login
-   netlify deploy
-   ```
-
-### Deploy em servidor próprio
-
-Para fazer deploy em um servidor próprio:
-
-1. Gere o build do projeto:
-
-   ```bash
-   npm run build
-   ```
-
-2. Copie a pasta `dist` para o seu servidor web (Apache, Nginx, etc.)
-
-3. Configure seu servidor web para servir a aplicação:
-
-   **Exemplo para Nginx:**
-
-   ```nginx
-   server {
-     listen 80;
-     server_name seu-dominio.com;
-     root /caminho/para/dist;
-     index index.html;
-     
-     location / {
-       try_files $uri $uri/ /index.html;
-     }
-   }
-   ```
 
 ## Contribuição
 
@@ -135,21 +90,6 @@ Contribuições são bem-vindas! Para contribuir:
 
 Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
 
-## Estrutura do Projeto
-
-- `/src/components`: Componentes reutilizáveis
-  - `/Blocks`: Componentes relacionados a blocos
-  - `/Transactions`: Componentes relacionados a transações
-  - `/Accounts`: Componentes relacionados a contas
-  - `/Layout`: Componentes de layout (Header, Footer)
-- `/src/pages`: Páginas da aplicação
-- `/src/services`: Serviços para comunicação com a API
-- `/src/types`: Definições de tipos TypeScript
-
-## API
-
-Este projeto utiliza a API GraphQL da MultiversX para buscar dados da blockchain. As consultas estão definidas no arquivo `/src/services/api.ts`.
-
 ## Melhorias Futuras
 
 - Adicionar paginação real
@@ -158,3 +98,7 @@ Este projeto utiliza a API GraphQL da MultiversX para buscar dados da blockchain
 - Implementar histórico de busca
 - Adicionar suporte para tokens e NFTs
 - Melhorar a experiência mobile
+- Implementar testes automatizados
+- Adicionar documentação de API
+- Implementar cache de dados
+- Adicionar suporte para múltiplos idiomas
